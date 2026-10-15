@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lookacore": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/lkc-shim",
+      "args": ["mcp"]
+    }
+  }
+}

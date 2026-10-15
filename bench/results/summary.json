@@ -1,0 +1,295 @@
+{
+  "heldout": {
+    "repos": [
+      "held-out 1",
+      "held-out 3",
+      "repo E",
+      "held-out 2",
+      "held-out 4",
+      "repo D"
+    ],
+    "summary": {
+      "looka": {
+        "hit1": 0.525,
+        "r5": 0.562,
+        "r10": 0.632,
+        "mrr": 0.647,
+        "median_ms": 561,
+        "n": 120,
+        "errors": 0
+      },
+      "bm25": {
+        "hit1": 0.375,
+        "r5": 0.453,
+        "r10": 0.581,
+        "mrr": 0.517,
+        "median_ms": 93,
+        "n": 120,
+        "errors": 0
+      },
+      "grep": {
+        "hit1": 0.258,
+        "r5": 0.319,
+        "r10": 0.475,
+        "mrr": 0.396,
+        "median_ms": 158,
+        "n": 120,
+        "errors": 0
+      },
+      "aider": {
+        "hit1": 0.1,
+        "r5": 0.13,
+        "r10": 0.177,
+        "mrr": 0.196,
+        "median_ms": 17897,
+        "n": 120,
+        "errors": 0
+      }
+    }
+  },
+  "dev-final": {
+    "repos": [
+      "repo A",
+      "repo C",
+      "repo B"
+    ],
+    "summary": {
+      "looka": {
+        "hit1": 0.389,
+        "r5": 0.452,
+        "r10": 0.61,
+        "mrr": 0.529,
+        "median_ms": 725,
+        "n": 90,
+        "errors": 0
+      },
+      "bm25": {
+        "hit1": 0.311,
+        "r5": 0.378,
+        "r10": 0.532,
+        "mrr": 0.457,
+        "median_ms": 276,
+        "n": 90,
+        "errors": 0
+      },
+      "grep": {
+        "hit1": 0.189,
+        "r5": 0.25,
+        "r10": 0.345,
+        "mrr": 0.288,
+        "median_ms": 274,
+        "n": 90,
+        "errors": 0
+      }
+    }
+  },
+  "aider": {
+    "repos": [
+      "held-out 1",
+      "repo A",
+      "repo C",
+      "held-out 2",
+      "repo B"
+    ],
+    "summary": {
+      "aider": {
+        "hit1": 0.055,
+        "r5": 0.103,
+        "r10": 0.132,
+        "mrr": 0.14,
+        "median_ms": 10443,
+        "n": 127,
+        "errors": 0
+      }
+    }
+  },
+  "v0-noaider": {
+    "repos": [
+      "held-out 1",
+      "repo A",
+      "repo C",
+      "held-out 2",
+      "repo B"
+    ],
+    "summary": {
+      "looka": {
+        "hit1": 0.283,
+        "r5": 0.348,
+        "r10": 0.437,
+        "mrr": 0.419,
+        "median_ms": 89,
+        "n": 127,
+        "errors": 0
+      },
+      "bm25": {
+        "hit1": 0.283,
+        "r5": 0.339,
+        "r10": 0.495,
+        "mrr": 0.429,
+        "median_ms": 157,
+        "n": 127,
+        "errors": 0
+      },
+      "grep": {
+        "hit1": 0.173,
+        "r5": 0.239,
+        "r10": 0.337,
+        "mrr": 0.288,
+        "median_ms": 136,
+        "n": 127,
+        "errors": 0
+      }
+    }
+  },
+  "v1": {
+    "repos": [
+      "held-out 1",
+      "repo A",
+      "repo C",
+      "held-out 2",
+      "repo B"
+    ],
+    "summary": {
+      "looka": {
+        "hit1": 0.386,
+        "r5": 0.41,
+        "r10": 0.529,
+        "mrr": 0.522,
+        "median_ms": 215,
+        "n": 127,
+        "errors": 0
+      }
+    }
+  },
+  "agent_ab": {
+    "tasks": 38,
+    "paired_runs_per_arm": 57,
+    "A_accepted": 19,
+    "B_accepted": 22,
+    "tasks_B_better": 3,
+    "tasks_A_better": 0,
+    "tasks_tied": 35,
+    "sign_test_p": 0.25,
+    "median_tokens": {
+      "A": 76388,
+      "B": 81017
+    },
+    "median_seconds": {
+      "A": 43,
+      "B": 91
+    },
+    "model": "sonnet",
+    "round4_only": {
+      "A": 8,
+      "B": 7
+    }
+  },
+  "ptbr_fresh_sample": {
+    "n": 58,
+    "pt_before": {
+      "hit1": 0.31,
+      "r10": 0.447,
+      "mrr": 0.435
+    },
+    "pt_after": {
+      "hit1": 0.345,
+      "r10": 0.488,
+      "mrr": 0.478
+    },
+    "en": {
+      "hit1": 0.397
+    }
+  },
+  "agent_ab_haiku": {
+    "model": "haiku",
+    "tasks": 26,
+    "runs_per_arm": 26,
+    "accepted_A": 14,
+    "accepted_B": 14,
+    "task_wins_B": 1,
+    "task_wins_A": 1,
+    "ties": 24,
+    "sign_test_p": 1.0,
+    "median_tokens_A": 91766,
+    "median_tokens_B": 91629,
+    "median_wall_s_A": 186,
+    "median_wall_s_B": 346
+  },
+  "mutation": {
+    "date": "2026-10-11",
+    "repos": 5,
+    "mutants": 60,
+    "detectable": 24,
+    "lkc_caught": 24,
+    "full_suite_caught": 24,
+    "harmless_edits": 60,
+    "lkc_false_alarms": 0,
+    "full_suite_false_alarms": 12,
+    "first_run_lkc_false_alarms": 3,
+    "median_secs_lkc": 25.1,
+    "median_secs_full_suite": 16.1
+  },
+  "gate_ab": {
+    "pairs": 117,
+    "rounds": [
+      "sonnet",
+      "haiku",
+      "sonnet"
+    ],
+    "plain": {
+      "accepted": 69,
+      "broken_genuine": 5,
+      "broken_lkc_false_alarm": 1,
+      "blocked_runs": 0,
+      "median_wall_s": 56,
+      "cost_usd": 12.52
+    },
+    "gate": {
+      "accepted": 67,
+      "broken_genuine": 0,
+      "broken_lkc_false_alarm": 2,
+      "blocked_runs": 4,
+      "median_wall_s": 125,
+      "cost_usd": 12.22
+    },
+    "paired_broken_only_plain": 5,
+    "paired_broken_only_gate": 0,
+    "sign_test_p_broken": 0.062,
+    "paired_accepted_only_plain": 3,
+    "paired_accepted_only_gate": 1,
+    "sign_test_p_accepted": 0.625,
+    "date": "2026-10-14",
+    "note": "broken = lkc verify --changed reports introduced failures; 3 confirmed lkc false alarms excluded (counted separately); gateClaim BLOCK 0.74 on the 5-vs-0 effect: indicative only"
+  },
+  "gate_speed": {
+    "date": "2026-10-15",
+    "tasks": "12 repo A",
+    "model": "sonnet",
+    "jobs": 4,
+    "gate_median_wall_s": {
+      "old_lkc": [
+        198,
+        218,
+        236
+      ],
+      "lkc_1d50d25": [
+        99,
+        103
+      ]
+    },
+    "plain_median_wall_s": {
+      "old_lkc": [
+        72,
+        60,
+        57
+      ],
+      "lkc_1d50d25": [
+        54,
+        60
+      ]
+    },
+    "accepted": "8/12 every arm and round",
+    "gate_checks_s": "18 of 24 in 6-46 s; 6 in 83-162 s, all forcing full suites",
+    "gateClaim": "PASS 0.80"
+  }
+}

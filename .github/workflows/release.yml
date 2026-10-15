@@ -1,0 +1,41 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          # Intel builds by cross-compiling on the arm64 runner (the Intel macOS runners are retired)
+          - { os: macos-latest, target: x86_64-apple-darwin }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # rustup ships on the runners: no third-party action runs with contents:write
+      - run: rustup toolchain install stable --profile minimal && rustup default stable && rustup target add "$TARGET"
+        env:
+          TARGET: ${{ matrix.target }}
+      - run: cargo build --release --locked --target "$TARGET"
+        env:
+          TARGET: ${{ matrix.target }}
+      # the tag reaches the shell only through env, never spliced into the script
+      - run: |
+          case "$TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "refusing unexpected tag: $TAG"; exit 1 ;; esac
+          a="lookacore-$TAG-$TARGET.tar.gz"
+          cp LICENSE "target/$TARGET/release/"
+          tar -czf "$a" -C "target/$TARGET/release" lkc looka LICENSE
+          # install.sh refuses an archive whose checksum doesn't match this file
+          shasum -a 256 "$a" > "$a.sha256"
+          gh release create "$TAG" --notes-file CHANGELOG.md || true
+          gh release upload "$TAG" "$a" "$a.sha256" --clobber
+        env:
+          TAG: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
+          GH_TOKEN: ${{ github.token }}

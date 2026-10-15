@@ -1,0 +1,15 @@
+{
+  "name": "lookacore",
+  "version": "0.2.0",
+  "description": "Verification gate for coding agents: when the agent says it is done, lkc runs typecheck, lint and the tests the change reaches, and blocks only on failures the change introduced (pre-existing ones on HEAD are told apart). Also an MCP server with repo map, context, impact, verify and probe.",
+  "author": {
+    "name": "LookADev",
+    "url": "https://github.com/lucasmartins-ai"
+  },
+  "homepage": "https://github.com/lucasmartins-ai/lookacore",
+  "repository": "https://github.com/lucasmartins-ai/lookacore",
+  "license": "MIT",
+  "keywords": ["verification", "testing", "gate", "hooks", "mcp"],
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json"
+}

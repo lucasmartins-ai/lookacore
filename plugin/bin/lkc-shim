@@ -1,0 +1,13 @@
+#!/bin/sh
+# LookaCore plugin entry point: runs the installed lkc binary. The plugin ships no binary, and a missing one
+# must never block the user, so without it the hooks say so once (SessionStart) and let everything through.
+for c in "$(command -v lkc 2>/dev/null)" "$HOME/.cargo/bin/lkc" "$HOME/.local/bin/lkc" /opt/homebrew/bin/lkc /usr/local/bin/lkc; do
+  [ -n "$c" ] && [ -x "$c" ] && exec "$c" "$@"
+done
+case "$*" in
+  *claude-start*)
+    printf '%s\n' '{"systemMessage": "LookaCore: the lkc binary was not found, so the verification gate is off. Install it: https://github.com/lucasmartins-ai/lookacore#install"}'
+    ;;
+esac
+cat >/dev/null 2>&1
+exit 0

@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/lkc-shim\" gate --hook claude-start --require-trust",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/lkc-shim\" gate --hook claude --require-trust",
+            "timeout": 900,
+            "statusMessage": "LookaCore: verifying the changes..."
+          }
+        ]
+      }
+    ]
+  }
+}

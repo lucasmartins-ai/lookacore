@@ -1,0 +1,4 @@
+%YAML 1.1
+--- !u!114 &1
+MonoBehaviour:
+  m_Sprite: {fileID: 21300000, guid: 4f1c2a9b8e7d6c5b4a3f2e1d0c9b8a7f, type: 3}

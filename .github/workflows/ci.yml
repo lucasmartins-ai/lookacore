@@ -1,0 +1,24 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # rustup ships on the runners: no third-party actions to pin
+      - run: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
+      - run: python3 -m pip install --user 'pytest==8.3.3' || python3 -m pip install --user --break-system-packages 'pytest==8.3.3'
+      - run: cargo clippy --all-targets -- -D warnings
+      # integration tests skip themselves when Blender, Chromium, Godot or Xcode are absent
+      - run: cargo test

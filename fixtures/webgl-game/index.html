@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>WebGL game</title><style>html,body{margin:0;background:#000}canvas{width:100vw;height:100vh;display:block}</style></head>
+<body><canvas id="c" width="1280" height="720"></canvas>
+<script>
+const gl = document.getElementById('c').getContext('webgl');
+const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; };
+const p = gl.createProgram();
+gl.attachShader(p, sh(gl.VERTEX_SHADER, 'attribute vec2 a;void main(){gl_Position=vec4(a,0,1);}'));
+gl.attachShader(p, sh(gl.FRAGMENT_SHADER, 'void main(){gl_FragColor=vec4(1,.3,.2,1);}'));
+gl.linkProgram(p); gl.useProgram(p);
+gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-.6,-.6, .6,-.6, 0,.7]), gl.STATIC_DRAW);
+gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+function frame() { gl.clearColor(.05, .1, .3, 1); gl.clear(gl.COLOR_BUFFER_BIT); gl.drawArrays(gl.TRIANGLES, 0, 3); requestAnimationFrame(frame); }
+frame();
+</script></body></html>

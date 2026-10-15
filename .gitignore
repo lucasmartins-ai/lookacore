@@ -1,0 +1,11 @@
+target/
+.looka/
+__pycache__/
+.pytest_cache/
+
+# raw benchmark data quotes private repos (code, commit messages); only the aggregate is versioned
+bench/results/*
+!bench/results/summary.json
+
+# local release archives
+dist/

@@ -1,0 +1,1 @@
+{"asset":{"version":"2.0"},"extensionsUsed":["KHR_draco_mesh_compression"],"extensionsRequired":["KHR_draco_mesh_compression"],"accessors":[{"count":24},{"count":36}],"meshes":[{"primitives":[{"attributes":{"POSITION":0},"indices":1}]}],"materials":[{}],"nodes":[{"mesh":0}],"scenes":[{"nodes":[0]}],"scene":0}

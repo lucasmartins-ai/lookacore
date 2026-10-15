@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "lookacore",
+  "description": "LookaCore: a verification gate and repo intelligence for coding agents.",
+  "owner": {
+    "name": "LookADev",
+    "url": "https://github.com/lucasmartins-ai"
+  },
+  "plugins": [
+    {
+      "name": "lookacore",
+      "source": "./plugin",
+      "description": "Blocks the agent from finishing while its changes introduce typecheck, lint or test failures; needs the lkc binary.",
+      "version": "0.2.0",
+      "category": "development"
+    }
+  ]
+}

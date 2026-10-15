@@ -1,0 +1,24 @@
+[package]
+name = "lookacore"
+version = "0.2.0"
+edition = "2021"
+description = "Universal AI development layer: project intelligence, context compilation and verification for any coding agent"
+license = "MIT"
+exclude = ["fixtures"]
+
+[dependencies]
+ignore = "0.4"
+libc = "0.2"
+miniz_oxide = "0.8"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# LookaCore (LKC): `lkc` is the command; `looka` stays as an alias for existing MCP registrations
+[[bin]]
+name = "lkc"
+path = "src/main.rs"
+
+[[bin]]
+name = "looka"
+path = "src/bin/looka.rs"
