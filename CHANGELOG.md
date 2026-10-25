@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Gate: nothing ran is not a pass.** Changed source files with zero commands run (no component, tool
+  missing, no affected test) now block as `NOT VERIFIED: no check ran for changed source files …` (git:
+  exit 1; Claude Code: `{"decision":"block"}`, once). Docs, config or asset changes alone still pass.
+- **`--base <ref>`** on `verify` and `impact` (CLI and MCP `looka_verify`/`looka_impact`): the change set is
+  `git diff <ref>...HEAD` plus the working tree, so committed work can be verified (pre-push, CI), and failures
+  are attributed against a pristine clone at the merge-base (baseline cache keyed by that commit). A bad ref
+  exits 2. The JSON report carries `base`.
+
 ## 0.2.0 (2026-10-15)
 
 - **Claude Code plugin** (`plugin/`, marketplace in `.claude-plugin/`): the gate's SessionStart/Stop hooks and the

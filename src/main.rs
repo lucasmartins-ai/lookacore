@@ -29,9 +29,12 @@ usage: looka <command> [args] [--root DIR] [--json]
   outline <file…>             symbols declared in files
   impact <file|symbol…>       consumers, affected tests, what to verify
   impact --changed            same, for uncommitted git changes
-  verify [--kinds a,b] [--component DIR] [--timeout SECS] [--changed] [--ci]
+  impact --base REF           same, for the commits since the merge-base with REF plus uncommitted changes
+  verify [--kinds a,b] [--component DIR] [--timeout SECS] [--changed] [--base REF] [--ci]
                               run discovered checks (default typecheck,lint,test); exit 1 on FAIL
                               --changed: only the tests affected by uncommitted changes
+                              --base REF: --changed over the commits since the merge-base with REF too,
+                              failures attributed against that merge-base (pre-push, CI)
                               --ci: first replicate the CI test job (env, Postgres/Redis services on a
                               free port, DB setup steps such as migrations) from .github/workflows
   probe [--component DIR] [--pages N] [--ci]
@@ -55,7 +58,7 @@ usage: looka <command> [args] [--root DIR] [--json]
   mcp                         serve all of the above as MCP tools over stdio
 ";
 
-const VALUED: &[&str] = &["root", "budget", "kinds", "component", "timeout", "pages", "for", "out", "hook"];
+const VALUED: &[&str] = &["root", "budget", "kinds", "component", "timeout", "pages", "for", "out", "hook", "base"];
 
 /// Uncommitted files under root (including untracked), any type.
 fn git_changed(root: &std::path::Path) -> Vec<String> {
@@ -143,7 +146,15 @@ fn main() {
             })
         }
         Some("impact") => {
-            let targets = if flags.contains_key("changed") { impact::changed_files(&root) } else { pos.clone() };
+            let base = get("base");
+            let targets = if flags.contains_key("changed") || base.is_some() {
+                impact::changed_files(&root, base.as_deref()).unwrap_or_else(|e| {
+                    eprintln!("looka impact: {e}");
+                    exit(2)
+                })
+            } else {
+                pos.clone()
+            };
             if targets.is_empty() {
                 eprintln!("looka impact: no targets (pass files/symbols, or --changed inside a git repo with changes)");
                 exit(2)
@@ -159,9 +170,13 @@ fn main() {
             let timeout = Duration::from_secs(get("timeout").and_then(|t| t.parse().ok()).unwrap_or(600));
             let map = detect::detect(&root);
             let _ci = flags.contains_key("ci").then(|| ci_env(&root, &map)).flatten();
-            let changed = flags.contains_key("changed").then(|| {
-                let (files, complete) = impact::changes(&root);
-                run::Changed { tests: impact::impact(&root, &map, &files).tests, files, complete }
+            let base = get("base");
+            let changed = (flags.contains_key("changed") || base.is_some()).then(|| {
+                let (files, complete) = impact::changes(&root, base.as_deref()).unwrap_or_else(|e| {
+                    eprintln!("looka verify: {e}");
+                    exit(2)
+                });
+                run::Changed { tests: impact::impact(&root, &map, &files).tests, files, complete, base }
             });
             let r = run::verify(&root, &map, &kinds, get("component").as_deref(), changed.as_ref(), timeout);
             code = if r.ok { 0 } else { 1 };

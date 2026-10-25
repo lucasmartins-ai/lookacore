@@ -48,6 +48,9 @@ pub struct Report {
     pub skipped: Vec<String>,
     /// with `--changed`: failures not reproduced on a pristine HEAD checkout. ok = (introduced == 0).
     pub introduced: Option<usize>,
+    /// with `--base`: the ref whose merge-base with HEAD the failures were attributed against
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
     pub saved_to: Option<String>,
 }
 
@@ -221,12 +224,14 @@ fn narrowed(c: &Component, cmd: &Cmd, tests: &[String]) -> Option<Cmd> {
     Some(Cmd { kind: "test", run: format!("{base} {}", mine.join(" ")), available: cmd.available })
 }
 
-/// Uncommitted source changes and the tests that depend on them (from `impact`).
+/// Changed source files (uncommitted, plus the range with `base`) and the tests that depend on them (from `impact`).
 pub struct Changed {
     pub files: Vec<String>,
     pub tests: Vec<String>,
     /// false: a deletion or non-source change was seen, so lint and tests run in full
     pub complete: bool,
+    /// `--base`: the changes span the commits since the merge-base with this ref, which is also the baseline
+    pub base: Option<String>,
 }
 
 /// The component's lint command narrowed to the changed files, for eslint- and ruff-based linters.
@@ -304,7 +309,8 @@ pub fn verify(root: &Path, map: &ProjectMap, kinds: &[String], component: Option
     let introduced = changed.and_then(|ch| match attribute(root, map, &mut results, ch, timeout) {
         Ok(n) => Some(n),
         Err(e) => {
-            skipped.push(format!("failure attribution: no pristine HEAD baseline ({e})"));
+            let at = ch.base.as_deref().unwrap_or("HEAD");
+            skipped.push(format!("failure attribution: no pristine {at} baseline ({e})"));
             None
         }
     });
@@ -315,6 +321,7 @@ pub fn verify(root: &Path, map: &ProjectMap, kinds: &[String], component: Option
             None => results.iter().all(|e| e.ok),
         },
         introduced,
+        base: changed.and_then(|c| c.base.clone()),
         root: root.display().to_string(),
         finished_at,
         results,
@@ -325,14 +332,15 @@ pub fn verify(root: &Path, map: &ProjectMap, kinds: &[String], component: Option
     r
 }
 
-/// Re-run failed commands (typecheck, lint, tests) on a pristine clone of HEAD and mark failures that already happen there.
-/// Returns the number of failures introduced by the working-tree changes, or why no baseline could be made.
+/// Re-run failed commands (typecheck, lint, tests) on a pristine clone of HEAD (or of the merge-base with `--base`)
+/// and mark failures that already happen there.
+/// Returns the number of failures introduced by the changes, or why no baseline could be made.
 fn attribute(root: &Path, map: &ProjectMap, results: &mut [Evidence], changed: &Changed, timeout: Duration) -> Result<usize, String> {
     if results.iter().all(|e| e.ok) {
         return Ok(0);
     }
     wait_for_warmup(root, timeout);
-    let bk = BaseKey::new(root, map)?;
+    let bk = BaseKey::new(root, map, changed.base.as_deref())?;
     let misses: Vec<usize> = (0..results.len()).filter(|&i| !results[i].ok && !bk.path(&results[i].component, &results[i].command).is_file()).collect();
     let jobs: Vec<(String, String)> = misses.iter().map(|&i| (results[i].component.clone(), results[i].command.clone())).collect();
     run_baselines(root, map, &bk, &jobs, timeout)?;
@@ -402,17 +410,23 @@ fn git_out(args: &[&str]) -> Result<String, String> {
     if o.status.success() { Ok(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { Err(String::from_utf8_lossy(&o.stderr).trim().to_string()) }
 }
 
-/// Where a baseline result is cached: a function of (HEAD, component, command, installed deps, lkc binary).
+/// Where a baseline result is cached: a function of (baseline commit, component, command, installed deps, lkc binary).
 struct BaseKey {
     cache: PathBuf,
+    /// the commit the baseline runs on: HEAD, or its merge-base with `--base`
     head: String,
     locks: Vec<u8>,
     exe: Option<SystemTime>,
 }
 
 impl BaseKey {
-    fn new(root: &Path, map: &ProjectMap) -> Result<Self, String> {
-        let head = git_out(&["-C", root.to_str().ok_or("non-utf8 path")?, "rev-parse", "HEAD"])?;
+    fn new(root: &Path, map: &ProjectMap, base: Option<&str>) -> Result<Self, String> {
+        let r = root.to_str().ok_or("non-utf8 path")?;
+        // the merge-base, not the ref's tip: a base branch that moved on must not explain away a failure the range added
+        let head = match base {
+            Some(b) => git_out(&["-C", r, "merge-base", b, "HEAD"])?,
+            None => git_out(&["-C", r, "rev-parse", "HEAD"])?,
+        };
         // installed deps are shared with the baseline (symlinked), so they are part of the key
         let locks: Vec<u8> = ["package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "Cargo.lock", "poetry.lock", "uv.lock", "requirements.txt", "go.sum"]
             .iter()
@@ -431,7 +445,7 @@ impl BaseKey {
     }
 }
 
-/// Runs (component, command) pairs on a pristine clone of HEAD, in parallel, and caches each result.
+/// Runs (component, command) pairs on a pristine clone at the baseline commit, in parallel, and caches each result.
 fn run_baselines(root: &Path, map: &ProjectMap, bk: &BaseKey, jobs: &[(String, String)], timeout: Duration) -> Result<(), String> {
     if jobs.is_empty() {
         return Ok(());
@@ -440,7 +454,9 @@ fn run_baselines(root: &Path, map: &ProjectMap, bk: &BaseKey, jobs: &[(String, S
     let top = fs::canonicalize(git_out(&["-C", root_s, "rev-parse", "--show-toplevel"])?).map_err(|e| e.to_string())?;
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
     let base = std::env::temp_dir().join(format!("looka-base-{}-{nanos}", std::process::id()));
-    git_out(&["clone", "-q", "--shared", top.to_str().ok_or("non-utf8 path")?, base.to_str().ok_or("non-utf8 path")?])?;
+    let base_s = base.to_str().ok_or("non-utf8 path")?;
+    git_out(&["clone", "-q", "--shared", "--no-checkout", top.to_str().ok_or("non-utf8 path")?, base_s])?;
+    git_out(&["-C", base_s, "checkout", "-q", "--detach", &bk.head])?;
     // canonical, so absolute paths printed by tools strip the same way as in the working tree
     let base = fs::canonicalize(&base).map_err(|e| e.to_string())?;
     let base_root = base.join(root.strip_prefix(&top).map_err(|e| e.to_string())?);
@@ -462,7 +478,7 @@ fn run_baselines(root: &Path, map: &ProjectMap, bk: &BaseKey, jobs: &[(String, S
         .iter()
         .filter_map(|(dir, command)| {
             let comp = map.components.iter().find(|c| &c.dir == dir)?;
-            eprintln!("looka: baseline on HEAD for `{command}`");
+            eprintln!("looka: baseline on {} for `{command}`", &bk.head[..bk.head.len().min(10)]);
             Some((comp, Cmd { kind: "baseline", run: command.clone(), available: true }))
         })
         .collect();
@@ -505,7 +521,7 @@ fn wait_for_warmup(root: &Path, timeout: Duration) {
 }
 
 fn warm_inner(root: &Path, map: &ProjectMap, timeout: Duration) -> Result<(), String> {
-    let bk = BaseKey::new(root, map)?;
+    let bk = BaseKey::new(root, map, None)?;
     let jobs: Vec<(String, String)> = map
         .components
         .iter()
@@ -537,8 +553,9 @@ fn save(root: &Path, r: &Report) -> std::io::Result<String> {
 }
 
 pub fn render(r: &Report) -> String {
+    let at = r.base.as_deref().map_or("HEAD".to_string(), |b| format!("the merge-base with {b}"));
     let partial = match r.introduced {
-        Some(0) if r.results.iter().any(|e| !e.ok) => " — no failures introduced (all failures pre-exist on HEAD)".to_string(),
+        Some(0) if r.results.iter().any(|e| !e.ok) => format!(" — no failures introduced (all failures pre-exist on {at})"),
         Some(n) if n > 0 => format!(" — {n} failure(s) introduced by the changes"),
         _ if r.ok && !r.skipped.is_empty() => " (partial: some checks skipped)".to_string(),
         _ => String::new(),
@@ -574,7 +591,7 @@ pub fn render(r: &Report) -> String {
                     s += &format!("  … {} flaky: failed in the full run, passed when re-run alone ({})\n", flaky.len(), flaky.join(", "));
                 }
                 if pre > 0 {
-                    s += &format!("  … {pre} pre-existing on HEAD (not caused by these changes; listed in the evidence file)\n");
+                    s += &format!("  … {pre} pre-existing on {at} (not caused by these changes; listed in the evidence file)\n");
                 }
             }
         }

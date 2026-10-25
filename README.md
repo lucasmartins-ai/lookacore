@@ -7,7 +7,8 @@ Cursor or local models. Its core job is to stop an agent from calling a change d
 
 ```bash
 lkc init     # Claude Code Stop hook + git pre-commit: the agent can't finish, nor commit, while its changes
-             # introduce failures (failures that already exist on HEAD don't count)
+             # introduce failures (failures that already exist on HEAD don't count), or change source
+             # code that no check could run against (NOT VERIFIED; docs, config and assets alone pass)
 ```
 
 Around that gate, it gives any agent the same seven things in any repository:
@@ -75,11 +76,15 @@ lkc context "cap discount coupons at 50%" # ranked files + outlines + snippets, 
 lkc outline src/cart.rs
 lkc impact src/pricing.rs                 # who uses it; tests that import it (import graph, 3 hops)
 lkc impact --changed                      # same, for uncommitted git changes
+lkc impact --base origin/main             # same, for the commits since the merge-base with that ref too
 lkc verify                                # typecheck + lint + test; exit 1 on FAIL
 lkc verify --kinds test --component dashboard
 lkc verify --changed                      # only tests affected by uncommitted changes; failures that also
                                             # happen on a pristine HEAD clone are marked pre-existing
 lkc verify --changed --ci                 # same, with the CI job's env + database replicated locally
+lkc verify --base origin/main             # --changed over a range of commits (pre-push, CI): the commits
+                                            # since the merge-base plus uncommitted work, attributed against
+                                            # a pristine checkout of that merge-base
 lkc init                                  # wire the gate: Claude Code SessionStart/Stop hooks + git pre-commit
 lkc gate --hook git                       # what the hooks run
 lkc probe                                 # web: start the dev server (or serve index.html), crawl routes,
@@ -210,6 +215,12 @@ other runners run the full suite), giving each runner only tests in its own lang
 it clones HEAD (`git clone --shared`, with everything git ignores — installs, generated clients, build
 output — linked in), re-runs the same command, and marks matching failures `pre-existing`. PASS then means:
 no failure introduced by the working-tree changes.
+
+`verify --base <ref>` (MCP: `base`) widens the change set to `git diff <ref>...HEAD` plus the working tree, so
+committed work is verified too (a clean tree after `git commit` is otherwise "nothing changed"). The baseline
+clone is checked out at the merge-base of `<ref>` and HEAD, not at the ref's tip: a base branch that moved on
+must not explain away a failure the range added. When `<ref>` is an ancestor of HEAD the two are the same. A
+ref that doesn't resolve exits 2 instead of reporting no changes. `impact --base <ref>` takes the same set.
 
 `--ci` (on `verify` and `probe`) first replicates the project's CI test job from `.github/workflows`: the
 job's env (secrets and `${{ }}` expressions skipped; variables that change how programs run, such as `PATH`,

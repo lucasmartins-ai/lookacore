@@ -185,9 +185,9 @@ pub fn impact(root: &Path, map: &ProjectMap, targets: &[String]) -> Impact {
     Impact { targets: targets.to_vec(), symbols, references, truncated, tests: tests.into_iter().collect(), verify }
 }
 
-/// Uncommitted files (tracked and untracked) under `root`, relative to it.
-pub fn changed_files(root: &Path) -> Vec<String> {
-    changes(root).0
+/// Changed source files under `root`, relative to it (see `changes`).
+pub fn changed_files(root: &Path, base: Option<&str>) -> Result<Vec<String>, String> {
+    changes(root, base).map(|c| c.0)
 }
 
 /// Build output, caches and dependencies: never a change anyone made by hand.
@@ -198,23 +198,42 @@ pub fn generated(p: &Path) -> bool {
 /// Uncommitted source files under `root`, and whether that list covers every relevant change.
 /// `false` when something that can't be narrowed changed (a deletion, config, fixture, manifest): callers
 /// should then fall back to the full test/lint commands.
-pub fn changes(root: &Path) -> (Vec<String>, bool) {
+/// `base`: also the files committed since the merge-base with that ref (`git diff <base>...HEAD`), so a range
+/// of commits is verified, not only the working tree. Err only for a bad `base`; outside git, no changes.
+pub fn changes(root: &Path, base: Option<&str>) -> Result<(Vec<String>, bool), String> {
     let git = |args: &[&str]| Command::new("git").arg("-C").arg(root).args(args).output().ok().filter(|o| o.status.success());
     let (Some(top), Some(st)) = (git(&["rev-parse", "--show-toplevel"]), git(&["status", "--porcelain", "-z", "--untracked-files=all"])) else {
-        return (vec![], true);
+        return if base.is_some() { Err(format!("{} is not inside a git repository", root.display())) } else { Ok((vec![], true)) };
     };
     let top = Path::new(String::from_utf8_lossy(&top.stdout).trim()).to_path_buf();
+    // (status, path) pairs: the working tree's, then the range's
+    let mut entries = vec![];
     let raw = String::from_utf8_lossy(&st.stdout).into_owned();
-    let mut entries = raw.split('\0');
-    let (mut files, mut complete) = (vec![], true);
-    while let Some(e) = entries.next() {
+    let mut it = raw.split('\0');
+    while let Some(e) = it.next() {
         if e.len() < 4 {
             continue;
         }
         let (status, path) = e.split_at(3);
         if status.starts_with('R') || status.starts_with('C') {
-            entries.next(); // -z puts the rename source in its own field
+            it.next(); // -z puts the rename source in its own field
         }
+        entries.push((status.to_string(), path.to_string()));
+    }
+    if let Some(b) = base {
+        // MCP callers pass this through: "--output=…" must not become a git option
+        if b.starts_with('-') {
+            return Err(format!("bad base `{b}`: not a ref"));
+        }
+        let d = git(&["diff", "--name-status", "--no-renames", "-z", &format!("{b}...HEAD"), "--"]).ok_or_else(|| format!("bad base `{b}`: no merge-base with HEAD"))?;
+        let raw = String::from_utf8_lossy(&d.stdout).into_owned();
+        let mut it = raw.split('\0');
+        while let (Some(status), Some(path)) = (it.next(), it.next()) {
+            entries.push((status.to_string(), path.to_string()));
+        }
+    }
+    let (mut files, mut complete) = (vec![], true);
+    for (status, path) in &entries {
         let p = top.join(path);
         // build output only when untracked: tracked source under a dir named `build/` or `dist/` is a real change
         if !p.starts_with(root) || (status.starts_with("??") && generated(&p)) {
@@ -230,9 +249,12 @@ pub fn changes(root: &Path) -> (Vec<String>, bool) {
             complete = false;
             continue;
         }
-        files.push(rel(root, &p));
+        let r = rel(root, &p);
+        if !files.contains(&r) {
+            files.push(r); // committed and edited again in the working tree: listed by both
+        }
     }
-    (files, complete)
+    Ok((files, complete))
 }
 
 pub fn render(i: &Impact) -> String {

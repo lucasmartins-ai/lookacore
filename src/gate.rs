@@ -124,7 +124,7 @@ pub fn gate(root: Option<PathBuf>, hook: &str, timeout: Duration, require_trust:
         return 0;
     }
     let session = input["session_id"].as_str().unwrap_or("").to_string();
-    let (files, complete) = impact::changes(&root);
+    let (files, complete) = impact::changes(&root, None).unwrap_or((vec![], true));
     let fp = fingerprint(&root, &files).to_string();
     let mut state = load(&root);
 
@@ -168,25 +168,27 @@ pub fn gate(root: Option<PathBuf>, hook: &str, timeout: Duration, require_trust:
         }
         if input["stop_hook_active"] == true && state["blocked"].as_str() == Some(fp.as_str()) {
             // blocked once already and the agent changed nothing since: let it stop rather than loop
-            eprintln!("lkc gate: introduced failures remain (see the previous report); stopping without further changes");
+            eprintln!("lkc gate: the previous block still applies (see its report); stopping without further changes");
             return 0;
         }
     }
 
     let t0 = std::time::Instant::now();
     let map = detect::detect(&root);
-    let changed = run::Changed { tests: impact::impact(&root, &map, &files).tests, files, complete };
+    let changed = run::Changed { tests: impact::impact(&root, &map, &files).tests, files, complete, base: None };
     let kinds: Vec<String> = run::DEFAULT_KINDS.iter().map(|s| s.to_string()).collect();
     let r = run::verify(&root, &map, &kinds, None, Some(&changed), timeout);
+    // nothing ran for changed source: unverified, not passed. Docs, config or assets alone still pass.
+    let unverified = r.results.is_empty() && !changed.files.is_empty();
+    let pass = r.ok || (r.results.is_empty() && !unverified);
     // what each check cost and found: the gate's price has to stay visible (last 50 kept)
-    let check = json!({"hook": hook, "ms": t0.elapsed().as_millis() as u64, "ok": r.ok || r.results.is_empty(), "complete": changed.complete,
+    let check = json!({"hook": hook, "ms": t0.elapsed().as_millis() as u64, "ok": pass, "complete": changed.complete,
         "steps": r.results.iter().map(|e| json!([e.kind, e.duration_ms])).collect::<Vec<_>>()});
     let mut checks = state["checks"].as_array().cloned().unwrap_or_default();
     checks.push(check);
     let skip = checks.len().saturating_sub(50);
     state["checks"] = json!(checks[skip..]);
-    if r.ok || r.results.is_empty() {
-        // nothing runnable is not a reason to block; `verify` itself reports it as not verified
+    if pass {
         if let Some(o) = state.as_object_mut() {
             o.remove("blocked");
         }
@@ -203,7 +205,15 @@ pub fn gate(root: Option<PathBuf>, hook: &str, timeout: Duration, require_trust:
         report.truncate(cut);
         report += "\n… (truncated; full report in .looka/evidence/latest.json)\n";
     }
-    let reason = format!("LookaCore gate: your changes introduce failures. Fix them before finishing.\n\n{report}");
+    let reason = if unverified {
+        let mut list = changed.files[..changed.files.len().min(20)].join(", ");
+        if changed.files.len() > 20 {
+            list += &format!(" … ({} more)", changed.files.len() - 20);
+        }
+        format!("LookaCore gate: NOT VERIFIED: no check ran for changed source files {list}\n\n{report}")
+    } else {
+        format!("LookaCore gate: your changes introduce failures. Fix them before finishing.\n\n{report}")
+    };
     if hook == "claude" {
         println!("{}", json!({"decision": "block", "reason": reason}));
         0

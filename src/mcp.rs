@@ -15,6 +15,7 @@ if it fails, fix the listed diagnostics first.";
 fn tools() -> Value {
     let root = json!({"type": "string", "description": "project root (default: server cwd)"});
     let as_json = json!({"type": "boolean", "description": "return JSON instead of compact markdown"});
+    let base = json!({"type": "string", "description": "git ref: also the commits since its merge-base with HEAD (implies changed=true)"});
     json!([
         {"name": "looka_map", "description": "Project map: languages, components (Cargo, npm/pnpm/bun, Python, Go, CMake, Flutter, Gradle, Make), discovered install/build/typecheck/lint/test commands with toolchain availability, entrypoints, test files.",
          "inputSchema": {"type": "object", "properties": {"root": root, "json": as_json}}},
@@ -22,10 +23,10 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "required": ["task"], "properties": {"task": {"type": "string"}, "budget": {"type": "integer", "description": "max snippet chars (default 16000)"}, "root": root, "json": as_json}}},
         {"name": "looka_outline", "description": "Symbols (functions, types, classes) declared in a file, with line numbers.",
          "inputSchema": {"type": "object", "required": ["file"], "properties": {"file": {"type": "string"}, "root": root}}},
-        {"name": "looka_impact", "description": "Impact of changing files or symbols: references in other files, tests likely affected (two hops), commands to verify. Use changed=true for uncommitted git changes.",
-         "inputSchema": {"type": "object", "properties": {"targets": {"type": "array", "items": {"type": "string"}}, "changed": {"type": "boolean"}, "root": root, "json": as_json}}},
+        {"name": "looka_impact", "description": "Impact of changing files or symbols: references in other files, tests likely affected (two hops), commands to verify. Use changed=true for uncommitted git changes, base=<ref> for a range of commits too.",
+         "inputSchema": {"type": "object", "properties": {"targets": {"type": "array", "items": {"type": "string"}}, "changed": {"type": "boolean"}, "base": base, "root": root, "json": as_json}}},
         {"name": "looka_verify", "description": "Run the project's own typecheck/lint/test commands in a scrubbed environment with a timeout, and return PASS/FAIL with structured diagnostics. Evidence is saved under .looka/evidence.",
-         "inputSchema": {"type": "object", "properties": {"ci": {"type": "boolean", "description": "first replicate the CI test job from .github/workflows: env, Postgres/Redis services on a free port, DB setup steps"}, "kinds": {"type": "array", "items": {"type": "string", "enum": ["build", "typecheck", "lint", "test"]}}, "component": {"type": "string", "description": "component dir from looka_map"}, "changed": {"type": "boolean", "description": "only tests affected by uncommitted changes (skips pre-existing unrelated failures)"}, "timeout_secs": {"type": "integer"}, "root": root, "json": as_json}}},
+         "inputSchema": {"type": "object", "properties": {"ci": {"type": "boolean", "description": "first replicate the CI test job from .github/workflows: env, Postgres/Redis services on a free port, DB setup steps"}, "kinds": {"type": "array", "items": {"type": "string", "enum": ["build", "typecheck", "lint", "test"]}}, "component": {"type": "string", "description": "component dir from looka_map"}, "changed": {"type": "boolean", "description": "only tests affected by uncommitted changes (skips pre-existing unrelated failures)"}, "base": base, "timeout_secs": {"type": "integer"}, "root": root, "json": as_json}}},
         {"name": "looka_probe", "description": "Run the project and observe it. Web: starts the dev server (or serves index.html), crawls routes from the file system and links, reports HTTP status per page and server-log errors. Godot: runs the game headless ~600 frames and reports script errors with res:// locations.",
          "inputSchema": {"type": "object", "properties": {"ci": {"type": "boolean", "description": "first replicate the CI test job from .github/workflows: env, Postgres/Redis services on a free port, DB setup steps"}, "component": {"type": "string"}, "pages": {"type": "integer", "description": "max pages to crawl (default 30)"}, "timeout_secs": {"type": "integer"}, "root": root, "json": as_json}}},
         {"name": "looka_assets", "description": "Game/3D asset report for the target engine (web/three.js, godot, unity, unreal): textures (size, power-of-two), glTF models (triangles, materials, Draco/meshopt/WebP), WAV weight, who references each asset (res://, loader paths, Unity GUIDs), missing references. With blend=<file.blend>: inspect the Blender scene; add export_for=three|godot|unity|unreal to export it headless with that engine's settings.",
@@ -79,13 +80,15 @@ fn call(default_root: &Path, p: &Value) -> Value {
             None => Err("missing required argument: file".into()),
         },
         "looka_impact" => {
-            let targets = if a["changed"].as_bool().unwrap_or(false) { impact::changed_files(&root) } else { strings(&a["targets"]) };
-            if targets.is_empty() {
-                Err("no targets (pass targets, or changed=true inside a git repo with changes)".into())
-            } else {
+            let base = a["base"].as_str();
+            let targets = if a["changed"].as_bool().unwrap_or(false) || base.is_some() { impact::changed_files(&root, base) } else { Ok(strings(&a["targets"])) };
+            targets.and_then(|targets| {
+                if targets.is_empty() {
+                    return Err("no targets (pass targets, or changed=true inside a git repo with changes)".into());
+                }
                 let i = impact::impact(&root, &detect::detect(&root), &targets);
                 Ok(fmt(json, &i, || impact::render(&i)))
-            }
+            })
         }
         "looka_verify" => {
             let mut kinds = strings(&a["kinds"]);
@@ -94,11 +97,12 @@ fn call(default_root: &Path, p: &Value) -> Value {
             }
             let timeout = Duration::from_secs(a["timeout_secs"].as_u64().unwrap_or(600).min(1800));
             let map = detect::detect(&root);
+            let base = a["base"].as_str();
+            let changed = match (a["changed"].as_bool().unwrap_or(false) || base.is_some()).then(|| impact::changes(&root, base)).transpose() {
+                Ok(c) => c.map(|(files, complete)| run::Changed { tests: impact::impact(&root, &map, &files).tests, files, complete, base: base.map(String::from) }),
+                Err(e) => return error(e),
+            };
             let ci = a["ci"].as_bool().unwrap_or(false).then(|| ci::prepare(&root, &map)).flatten();
-            let changed = a["changed"].as_bool().unwrap_or(false).then(|| {
-                let (files, complete) = impact::changes(&root);
-                run::Changed { tests: impact::impact(&root, &map, &files).tests, files, complete }
-            });
             let r = run::verify(&root, &map, &kinds, a["component"].as_str(), changed.as_ref(), timeout);
             Ok(ci_lines(&ci) + &fmt(json, &r, || run::render(&r)))
         }

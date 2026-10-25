@@ -259,6 +259,91 @@ fn plugin_gate_runs_nothing_in_an_untrusted_repo() {
 }
 
 #[test]
+fn verify_base_attributes_committed_changes_against_the_merge_base() {
+    let dir = scratch("py-app");
+    let root = dir.to_str().unwrap();
+    let git = |args: &[&str]| assert!(Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap().status.success());
+    let commit = |msg: &str| git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", msg]);
+    // the base already has a failing test
+    let t = dir.join("tests/test_cart.py");
+    std::fs::write(&t, std::fs::read_to_string(&t).unwrap() + "\n\ndef test_broken_on_base():\n    assert 1 == 2\n").unwrap();
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    commit("base");
+    let pricing = dir.join("shop/pricing.py");
+    let src = std::fs::read_to_string(&pricing).unwrap();
+
+    // committed, clean working tree: only the range shows the change
+    std::fs::write(&pricing, src.clone() + "\n# harmless\n").unwrap();
+    commit("harmless");
+    let (_, imp) = looka(&["impact", "--base", "HEAD~1", "--root", root]);
+    assert_eq!(imp["targets"], serde_json::json!(["shop/pricing.py"]), "{imp}");
+    let (code, ok) = looka(&["verify", "--base", "HEAD~1", "--kinds", "test", "--root", root]);
+    assert_eq!((code, &ok["introduced"]), (0, &Value::from(0)), "a failure already at the base is pre-existing: {ok}");
+    assert!(ok.to_string().contains("\"preexisting\":true"), "{ok}");
+
+    // a size other than the harmless version's, so Python can't reuse its .pyc
+    std::fs::write(&pricing, src.replace("cents - cents", "cents + cents")).unwrap();
+    commit("break");
+    let (code, bad) = looka(&["verify", "--base", "HEAD~1", "--kinds", "test", "--root", root]);
+    assert_eq!((code, &bad["base"]), (1, &Value::from("HEAD~1")), "{bad}");
+    assert!(bad["introduced"].as_u64().unwrap_or(0) >= 1, "a committed break is introduced: {bad}");
+    assert!(bad.to_string().contains("\"preexisting\":true"), "the base's own failure stays pre-existing: {bad}");
+
+    // a ref that doesn't resolve is an error, never "nothing changed"
+    for b in ["no-such-ref", "--output=x"] {
+        let o = Command::new(env!("CARGO_BIN_EXE_lkc")).args(["verify", &format!("--base={b}"), "--root", root]).output().unwrap();
+        assert_eq!(o.status.code(), Some(2), "{b}: {}", String::from_utf8_lossy(&o.stderr));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn gate_blocks_source_changes_no_check_could_verify() {
+    // no manifest: no component, so no command can run here
+    let dir = std::env::temp_dir().join(format!("looka-test-{}-unverifiable", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("tool.py"), "print('hi')\n").unwrap();
+    std::fs::write(dir.join("README.md"), "# tool\n").unwrap();
+    let git = |args: &[&str]| assert!(Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap().status.success());
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"]);
+    let git_hook = || {
+        let o = Command::new(env!("CARGO_BIN_EXE_lkc")).args(["gate", "--hook", "git"]).current_dir(&dir).output().unwrap();
+        (o.status.code(), String::from_utf8_lossy(&o.stderr).into_owned())
+    };
+    let claude = |kind: &str, active: bool| {
+        use std::io::Write;
+        let mut c = Command::new(env!("CARGO_BIN_EXE_lkc")).args(["gate", "--hook", kind]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
+        c.stdin.take().unwrap().write_all(serde_json::json!({"session_id": "s", "cwd": dir, "stop_hook_active": active}).to_string().as_bytes()).unwrap();
+        String::from_utf8_lossy(&c.wait_with_output().unwrap().stdout).trim().to_string()
+    };
+    assert_eq!(claude("claude-start", false), "");
+
+    // docs only: nothing to verify, nothing blocks
+    std::fs::write(dir.join("README.md"), "# tool\nusage: python tool.py\n").unwrap();
+    assert_eq!(git_hook().0, Some(0));
+    assert_eq!(claude("claude", false), "");
+
+    // source with no check that could run: not verified, so not passed
+    std::fs::write(dir.join("tool.py"), "print('bye')\n").unwrap();
+    let (code, err) = git_hook();
+    assert_eq!(code, Some(1), "{err}");
+    assert!(err.contains("NOT VERIFIED: no check ran for changed source files tool.py"), "{err}");
+    let out = claude("claude", false);
+    let v: Value = serde_json::from_str(&out).unwrap_or_else(|e| panic!("{e}: {out}"));
+    assert_eq!(v["decision"], "block", "{out}");
+    assert!(v["reason"].as_str().unwrap().contains("NOT VERIFIED"), "{out}");
+    // blocked once, nothing changed since: the agent may stop
+    assert_eq!(claude("claude", true), "");
+    let state: Value = serde_json::from_str(&std::fs::read_to_string(dir.join(".looka/gate.json")).unwrap()).unwrap();
+    assert_eq!(state["checks"].as_array().unwrap().last().unwrap()["ok"], false, "{state}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn verify_changed_ignores_prose_when_narrowing() {
     let dir = scratch("py-app");
     let root = dir.to_str().unwrap();
