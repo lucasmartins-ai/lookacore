@@ -184,23 +184,46 @@ fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// The component's test command narrowed to `tests` (root-relative), for runners that take file filters.
-/// None = runner can't filter (cargo, make, …): run the full suite.
+/// Source extensions each ecosystem's toolchain reads. An ecosystem not listed (make) may read anything.
+const READS: &[(&str, &[&str])] = &[
+    ("rust", &["rs"]),
+    ("node", &["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts", "vue", "svelte"]),
+    ("python", &["py"]),
+    ("go", &["go"]),
+    ("cmake", &["c", "h", "cc", "cpp", "cxx", "hpp", "hh"]),
+    ("unreal", &["c", "h", "cc", "cpp", "cxx", "hpp", "hh", "cs"]),
+    ("xcode", &["swift", "c", "h", "cc", "cpp", "cxx", "hpp", "hh"]),
+    ("gradle", &["java", "kt", "kts"]),
+    ("flutter", &["dart"]),
+    ("godot", &["gd", "cs"]),
+    ("unity", &["cs"]),
+];
+
+fn ext(file: &str) -> &str {
+    file.rsplit_once('.').map_or("", |(_, e)| e)
+}
+
+/// Whether this component's commands can check `file` (root-relative): inside it, and in a language its toolchain
+/// reads. cargo in the root says nothing about the Python script next to the crate.
+pub fn reads(c: &Component, file: &str) -> bool {
+    let inside = c.dir == "." || file.starts_with(&format!("{}/", c.dir));
+    inside && READS.iter().find(|(e, _)| *e == c.ecosystem).is_none_or(|(_, exts)| exts.contains(&ext(file)))
+}
+
+/// Some ecosystem's toolchain reads files like this one. Shell, SQL, Ruby… have no adapter: no check that ran
+/// could have covered them, so they count as unverified only when nothing ran at all.
+pub fn checkable(file: &str) -> bool {
+    READS.iter().any(|(_, exts)| exts.contains(&ext(file)))
+}
+
 /// Whether this component's test runner can take `test`: a repo with both pytest and vitest at the root
 /// must not hand `.test.mjs` files to pytest.
 fn runs_test(c: &Component, test: &str) -> bool {
-    let inside = c.dir == "." || test.starts_with(&format!("{}/", c.dir));
-    let ext = test.rsplit_once('.').map_or("", |(_, e)| e);
-    inside
-        && match c.ecosystem {
-            "python" => ext == "py",
-            "node" => matches!(ext, "js" | "jsx" | "ts" | "tsx" | "mjs" | "cjs" | "mts" | "cts"),
-            "go" => test.ends_with("_test.go"),
-            "cargo" => ext == "rs",
-            _ => true,
-        }
+    reads(c, test) && (c.ecosystem != "go" || test.ends_with("_test.go"))
 }
 
+/// The component's test command narrowed to `tests` (root-relative), for runners that take file filters.
+/// None = runner can't filter (cargo, make, …): run the full suite.
 fn narrowed(c: &Component, cmd: &Cmd, tests: &[String]) -> Option<Cmd> {
     let raw: Vec<&str> = tests
         .iter()
@@ -359,8 +382,9 @@ fn attribute(root: &Path, map: &ProjectMap, results: &mut [Evidence], changed: &
                 crate::impact::generated(Path::new(f))
                     && Command::new("git").arg("-C").arg(root.join(&e.component)).args(["check-ignore", "-q", "--", f]).status().is_ok_and(|s| s.success())
             };
-            x.preexisting = x.file.as_deref().is_some_and(ignored) || before.diagnostics.iter().any(|b| b.file == x.file && b.message == x.message);
+            x.preexisting = x.file.as_deref().is_some_and(ignored);
         }
+        mark_preexisting(&mut e.diagnostics, &before.diagnostics);
         if e.kind == "test" && !e.timed_out {
             rerun_alone(root, map, e, changed, timeout);
         }
@@ -369,6 +393,22 @@ fn attribute(root: &Path, map: &ProjectMap, results: &mut [Evidence], changed: &
         introduced += if e.diagnostics.is_empty() || e.timed_out { new.max(1) } else { new };
     }
     Ok(introduced)
+}
+
+/// Marks the diagnostics the baseline also had. Each baseline diagnostic excuses one, not all look-alikes: one
+/// pre-existing "Object is possibly 'undefined'." in a file must not wave through every new one there. The id is
+/// part of the match (`code`: a test's name, a TS/rustc code), so a test that newly fails with the same message
+/// as an old failure in its file ("AssertionError: False is not true") is still introduced.
+// ponytail: matched in output order, so after a line shift the copy reported as new may be the old one (the count
+// is right); O(n·m), a HashMap of counts if baselines ever hold thousands of diagnostics.
+fn mark_preexisting(diags: &mut [Diagnostic], before: &[Diagnostic]) {
+    let mut left: Vec<&Diagnostic> = before.iter().collect();
+    for x in diags.iter_mut().filter(|x| !x.preexisting) {
+        if let Some(i) = left.iter().position(|b| b.file == x.file && b.code == x.code && b.severity == x.severity && b.message == x.message) {
+            left.swap_remove(i);
+            x.preexisting = true;
+        }
+    }
 }
 
 /// Runs the closures on their own threads and returns their results in order.
@@ -615,6 +655,29 @@ mod tests {
         let cmd = Cmd { kind: "test", run: "python -m pytest -q".into(), available: true };
         let n = narrowed(&py, &cmd, &["tests/test_a.py".into(), "test/index.test.js".into()]).unwrap();
         assert!(n.run.contains("tests/test_a.py") && !n.run.contains("index.test.js"), "{}", n.run);
+    }
+
+    #[test]
+    fn preexisting_failures_are_counted_and_keyed_by_id() {
+        let d = |code: &str, line: usize, msg: &str| Diagnostic {
+            severity: "error".into(),
+            file: Some("a.ts".into()),
+            line: Some(line),
+            col: None,
+            code: Some(code.into()),
+            message: msg.into(),
+            hint: None,
+            preexisting: false,
+            flaky: false,
+        };
+        let undef = "Object is possibly 'undefined'.";
+        let assert = "AssertionError: False is not true";
+        // HEAD: one such type error and one failing test in the file
+        let before = [d("TS2532", 4, undef), d("T::test_even", 0, assert)];
+        // the change adds a second identical type error and breaks another test with the same message
+        let mut now = vec![d("TS2532", 4, undef), d("TS2532", 9, undef), d("T::test_even", 0, assert), d("T::test_valid", 0, assert)];
+        mark_preexisting(&mut now, &before);
+        assert_eq!(now.iter().map(|x| x.preexisting).collect::<Vec<_>>(), [true, false, true, false]);
     }
 
     #[test]

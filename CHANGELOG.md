@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **Attribution counts.** A failure is pre-existing only when the baseline has one with the same file, id (test
+  name, TS/rustc code), severity and message, and each baseline failure excuses one. Before, any look-alike
+  excused all: one old `AssertionError` in a test file, or one old `Object is possibly 'undefined'.`, let every
+  new one in that file through as PASS.
+- **`--ci` stops when a service can't start.** A service with no local binary, or an image other than
+  Postgres/Redis, now exits 2 (MCP: an error) before any setup step or test runs. Before, the job ran on with its
+  URLs still naming the CI port on this machine, so a migration or seed could reach the developer's own database.
+  Redis must also answer on its port.
+- **Not verified, per file.** The gate blocks a changed source file that no check which ran could read, even when
+  other checks ran: cargo in the root no longer vouches for a Python script, nor `web/`'s tsc for an `api/`
+  package whose pytest is missing. A Rust component's tests also no longer take non-Rust test files.
 - **Gate: nothing ran is not a pass.** Changed source files with zero commands run (no component, tool
   missing, no affected test) now block as `NOT VERIFIED: no check ran for changed source files …` (git:
   exit 1; Claude Code: `{"decision":"block"}`, once). Docs, config or asset changes alone still pass.

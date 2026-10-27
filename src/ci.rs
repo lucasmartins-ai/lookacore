@@ -143,8 +143,14 @@ fn start_redis(svc: &Value, ci: &mut CiEnv) -> Result<(u16, u16), String> {
     let host_port = svc["ports"][0].as_str().and_then(|p| p.split(':').next()).and_then(|p| p.parse().ok()).unwrap_or(6379);
     let port = free_port();
     let child = Command::new(bin).args(["--port", &port.to_string(), "--save", "", "--appendonly", "no"]).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|e| e.to_string())?;
-    ci.children.push(child);
-    std::thread::sleep(Duration::from_millis(300));
+    ci.children.push(child); // before the check: torn down with the rest if it never listens
+    let up = (0..30).any(|_| {
+        std::thread::sleep(Duration::from_millis(100));
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+    });
+    if !up {
+        return Err(format!("redis-server did not listen on 127.0.0.1:{port}"));
+    }
     ci.summary.push(format!("redis on 127.0.0.1:{port} (CI's :{host_port})"));
     Ok((host_port, port))
 }
@@ -169,9 +175,10 @@ fn allowed_setup(root: &Path, wd: &str, cmd: &str) -> bool {
     matches!(w.as_slice(), ["npx", "prisma", ..] | ["prisma", ..] | ["alembic", ..] | [_, "manage.py", "migrate", ..] | ["python" | "python3", "-m", "alembic", ..])
 }
 
-/// Replicate the CI test job. Returns None when the project has no workflow with a test job.
-pub fn prepare(root: &Path, map: &detect::ProjectMap) -> Option<CiEnv> {
-    let (file, name, wf, job) = pick_job(root)?;
+/// Replicate the CI test job. Ok(None) when the project has no workflow with a test job; Err when a service of the
+/// job can't be started here, and then nothing runs.
+pub fn prepare(root: &Path, map: &detect::ProjectMap) -> Result<Option<CiEnv>, String> {
+    let Some((file, name, wf, job)) = pick_job(root) else { return Ok(None) };
     let mut ci = CiEnv { summary: vec![format!("ci: replicating `{name}` from .github/workflows/{file}")], pg_dirs: vec![], children: vec![] };
     let mut remap: Vec<(u16, u16)> = vec![];
     for (sname, svc) in job["services"].as_object().into_iter().flatten() {
@@ -183,9 +190,12 @@ pub fn prepare(root: &Path, map: &detect::ProjectMap) -> Option<CiEnv> {
         } else {
             Err(format!("service `{sname}` ({image}) is not replicated"))
         };
+        // without its own instance, the job's URLs still name the CI port on this machine: the developer's own
+        // database, which setup steps (migrations, seeds) and tests would then write to. Services that did start
+        // are torn down when `ci` drops.
         match started {
             Ok(m) => remap.push(m),
-            Err(e) => ci.summary.push(format!("⚠ {e}")),
+            Err(e) => return Err(format!("{e}: stopped before running anything, since the job's setup steps and tests would reach whatever already listens on its port here")),
         }
     }
     // workflow-level then job-level env; expressions (${{ secrets.X }}) can't be evaluated locally
@@ -237,5 +247,5 @@ pub fn prepare(root: &Path, map: &detect::ProjectMap) -> Option<CiEnv> {
         let ev = run::exec(root, &detect::Component { dir: wd.into(), ..comp.clone() }, &detect::Cmd { kind: "ci-setup", run: cmd.trim().to_string(), available: true }, Duration::from_secs(600));
         ci.summary.push(format!("{} setup `{}`{}", if ev.ok { "✓" } else { "✗" }, cmd.lines().next().unwrap_or(""), if ev.ok { String::new() } else { format!(": {}", ev.output_tail.lines().last().unwrap_or("")) }));
     }
-    Some(ci)
+    Ok(Some(ci))
 }

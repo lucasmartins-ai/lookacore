@@ -178,9 +178,18 @@ pub fn gate(root: Option<PathBuf>, hook: &str, timeout: Duration, require_trust:
     let changed = run::Changed { tests: impact::impact(&root, &map, &files).tests, files, complete, base: None };
     let kinds: Vec<String> = run::DEFAULT_KINDS.iter().map(|s| s.to_string()).collect();
     let r = run::verify(&root, &map, &kinds, None, Some(&changed), timeout);
-    // nothing ran for changed source: unverified, not passed. Docs, config or assets alone still pass.
-    let unverified = r.results.is_empty() && !changed.files.is_empty();
-    let pass = r.ok || (r.results.is_empty() && !unverified);
+    // a changed source file no check that ran could read is unverified, not passed: a check elsewhere (cargo in the
+    // root, tsc in web/) says nothing about a Python script or an api/ package whose pytest is missing. Docs, config
+    // or assets alone still pass.
+    let ran: Vec<&detect::Component> = map.components.iter().filter(|c| r.results.iter().any(|e| e.component == c.dir)).collect();
+    let uncovered: Vec<String> = changed
+        .files
+        .iter()
+        .filter(|f| (r.results.is_empty() || run::checkable(f)) && !ran.iter().any(|c| run::reads(c, f)))
+        .cloned()
+        .collect();
+    let unverified = !uncovered.is_empty();
+    let pass = !unverified && (r.ok || r.results.is_empty());
     // what each check cost and found: the gate's price has to stay visible (last 50 kept)
     let check = json!({"hook": hook, "ms": t0.elapsed().as_millis() as u64, "ok": pass, "complete": changed.complete,
         "steps": r.results.iter().map(|e| json!([e.kind, e.duration_ms])).collect::<Vec<_>>()});
@@ -206,9 +215,9 @@ pub fn gate(root: Option<PathBuf>, hook: &str, timeout: Duration, require_trust:
         report += "\n… (truncated; full report in .looka/evidence/latest.json)\n";
     }
     let reason = if unverified {
-        let mut list = changed.files[..changed.files.len().min(20)].join(", ");
-        if changed.files.len() > 20 {
-            list += &format!(" … ({} more)", changed.files.len() - 20);
+        let mut list = uncovered[..uncovered.len().min(20)].join(", ");
+        if uncovered.len() > 20 {
+            list += &format!(" … ({} more)", uncovered.len() - 20);
         }
         format!("LookaCore gate: NOT VERIFIED: no check ran for changed source files {list}\n\n{report}")
     } else {

@@ -79,13 +79,22 @@ fn git_changed(root: &std::path::Path) -> Vec<String> {
 }
 
 /// `--ci`: replicate the CI test job (env, database services, setup steps); torn down when dropped.
+/// A service that can't be started here exits 2: nothing runs against the CI's ports on this machine.
 fn ci_env(root: &std::path::Path, map: &detect::ProjectMap) -> Option<ci::CiEnv> {
-    let c = ci::prepare(root, map);
-    match &c {
-        Some(c) => c.summary.iter().for_each(|l| eprintln!("lkc: {l}")),
-        None => eprintln!("lkc: --ci: no .github/workflows job that runs tests; running without it"),
+    match ci::prepare(root, map) {
+        Ok(Some(c)) => {
+            c.summary.iter().for_each(|l| eprintln!("lkc: {l}"));
+            Some(c)
+        }
+        Ok(None) => {
+            eprintln!("lkc: --ci: no .github/workflows job that runs tests; running without it");
+            None
+        }
+        Err(e) => {
+            eprintln!("lkc: --ci: {e}");
+            exit(2)
+        }
     }
-    c
 }
 
 pub fn fmt<T: Serialize>(json: bool, v: &T, md: impl FnOnce() -> String) -> String {

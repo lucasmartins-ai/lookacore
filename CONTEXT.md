@@ -18,7 +18,8 @@
 - **Blank render** — a canvas page whose whole screenshot is ≥ 99.9% one colour.
 - **Contract** — an HTTP endpoint (method + normalized path, params as `*`, catch-alls as `**`) and the calls that reach it from any component. A *broken* call targets a path prefix this repo serves but no endpoint matches.
 - **Gate** — `verify --changed` run *for* the agent: Claude Code's Stop hook blocks finishing, git's pre-commit blocks committing, while the changes introduce failures. A session is judged only on what changed after it started (SessionStart fingerprint).
-- **Not verified** — changed source files and zero commands ran (no component, tool missing, no affected test). Never a pass: the gate blocks it once, like a failure. Changes to docs, config or assets alone are not source and still pass.
+- **Not verified** — a changed source file that no command which ran could read: zero commands ran (no component, tool missing, no affected test), or the ones that ran belong to other components or languages (cargo beside a Python script). Never a pass: the gate blocks it once, like a failure. Changes to docs, config or assets alone are not source and still pass; source no adapter reads (shell, SQL) counts only when nothing ran.
+- **Pre-existing match** — a failure is pre-existing when the baseline has the same file, id (`code`: test name, compiler code), severity and message, counted: each baseline diagnostic excuses one.
 - **CI replication** — `--ci`: the CI test job's env, database services and setup steps reproduced locally before verify/probe; only declared package scripts and migration tools run.
 - **False alarm** — a check that fails on a harmless change; running the full suite raises one on every change when HEAD already fails.
 - **Diagnostic** — normalized `{severity, file, line, col, code, message, hint}` from any tool's output.

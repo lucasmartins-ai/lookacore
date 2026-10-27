@@ -102,7 +102,10 @@ fn call(default_root: &Path, p: &Value) -> Value {
                 Ok(c) => c.map(|(files, complete)| run::Changed { tests: impact::impact(&root, &map, &files).tests, files, complete, base: base.map(String::from) }),
                 Err(e) => return error(e),
             };
-            let ci = a["ci"].as_bool().unwrap_or(false).then(|| ci::prepare(&root, &map)).flatten();
+            let ci = match a["ci"].as_bool().unwrap_or(false).then(|| ci::prepare(&root, &map)).transpose() {
+                Ok(c) => c.flatten(),
+                Err(e) => return error(e),
+            };
             let r = run::verify(&root, &map, &kinds, a["component"].as_str(), changed.as_ref(), timeout);
             Ok(ci_lines(&ci) + &fmt(json, &r, || run::render(&r)))
         }
@@ -110,7 +113,10 @@ fn call(default_root: &Path, p: &Value) -> Value {
             let timeout = Duration::from_secs(a["timeout_secs"].as_u64().unwrap_or(600).min(1800));
             let pages = a["pages"].as_u64().unwrap_or(30).min(500) as usize;
             let map = detect::detect(&root);
-            let ci = a["ci"].as_bool().unwrap_or(false).then(|| ci::prepare(&root, &map)).flatten();
+            let ci = match a["ci"].as_bool().unwrap_or(false).then(|| ci::prepare(&root, &map)).transpose() {
+                Ok(c) => c.flatten(),
+                Err(e) => return error(e),
+            };
             let p = probe::probe(&root, &map, a["component"].as_str(), pages, timeout);
             Ok(ci_lines(&ci) + &fmt(json, &p, || probe::render(&p)))
         }

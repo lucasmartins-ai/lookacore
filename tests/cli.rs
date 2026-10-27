@@ -344,6 +344,32 @@ fn gate_blocks_source_changes_no_check_could_verify() {
 }
 
 #[test]
+fn gate_blocks_a_changed_file_that_only_other_checks_ran_beside() {
+    // a Rust crate with a Python script: cargo check and clippy run, but neither reads the script
+    let dir = scratch("rs-app");
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    std::fs::write(dir.join("scripts/tool.py"), "def main():\n    return 1\n").unwrap();
+    let git = |args: &[&str]| assert!(Command::new("git").arg("-C").arg(&dir).args(args).output().unwrap().status.success());
+    git(&["init", "-q"]);
+    git(&["add", "."]);
+    git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base"]);
+    let git_hook = || {
+        let o = Command::new(env!("CARGO_BIN_EXE_lkc")).args(["gate", "--hook", "git"]).current_dir(&dir).output().unwrap();
+        (o.status.code(), String::from_utf8_lossy(&o.stderr).into_owned())
+    };
+    let lib = dir.join("src/lib.rs");
+    std::fs::write(&lib, std::fs::read_to_string(&lib).unwrap() + "\n// harmless\n").unwrap();
+    let (code, err) = git_hook();
+    assert_eq!(code, Some(0), "a Rust change cargo checked passes: {err}");
+
+    std::fs::write(dir.join("scripts/tool.py"), "def main(:\n    return 1\n").unwrap();
+    let (code, err) = git_hook();
+    assert_eq!(code, Some(1), "{err}");
+    assert!(err.contains("NOT VERIFIED: no check ran for changed source files scripts/tool.py\n"), "only the unchecked file is listed: {err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn verify_changed_ignores_prose_when_narrowing() {
     let dir = scratch("py-app");
     let root = dir.to_str().unwrap();
@@ -634,5 +660,27 @@ fn verify_ci_replicates_the_workflow_env_and_db_setup() {
     let (code, ci) = looka(&["verify", "--ci", "--kinds", "test", "--root", root]);
     assert_eq!(code, 0, "{ci}");
     assert!(!dir.join("pwned.txt").exists(), "arbitrary shell from the workflow must not run");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ci_stops_when_a_service_cannot_be_started() {
+    let dir = scratch("py-app");
+    std::fs::create_dir_all(dir.join(".github/workflows")).unwrap();
+    // MySQL is never replicated: the job's URL would still name :3306 here, maybe the developer's own database
+    std::fs::write(
+        dir.join(".github/workflows/ci.yml"),
+        "name: ci\non: [push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    services:\n      db:\n        image: mysql:8\n        ports:\n          - 3306:3306\n    env:\n      DATABASE_URL: mysql://root:root@localhost:3306/app\n    steps:\n      - uses: actions/checkout@v4\n      - name: Migrate database\n        run: python3 manage.py migrate\n      - run: python3 -m pytest -q\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("manage.py"), "import os, pathlib\npathlib.Path('migrated.txt').write_text(os.environ.get('DATABASE_URL', ''))\n").unwrap();
+    let root = dir.to_str().unwrap();
+    for cmd in ["verify", "probe"] {
+        let o = Command::new(env!("CARGO_BIN_EXE_lkc")).args([cmd, "--ci", "--root", root]).output().unwrap();
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(o.status.code(), Some(2), "{cmd}: {err}");
+        assert!(err.contains("(mysql:8) is not replicated"), "{cmd}: {err}");
+    }
+    assert!(!dir.join("migrated.txt").exists(), "a setup step ran against the CI's port on this machine");
     let _ = std::fs::remove_dir_all(&dir);
 }

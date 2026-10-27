@@ -206,7 +206,9 @@ jest/vitest, and missing-module / missing-tool errors.
 `verify` runs only commands that `map` discovered (an agent cannot pass arbitrary shell), in the component
 directory, with an allowlisted environment (tokens, keys and cloud credentials are dropped; pass extras with
 `LOOKA_ENV_PASS=NAME1,NAME2`), in its own process group, killed on timeout (default 600s). Each run is saved
-to `.looka/evidence/<ts>.json` and `latest.json` (git-ignored automatically). No commands ran = not verified.
+to `.looka/evidence/<ts>.json` and `latest.json` (git-ignored automatically). No commands ran = not verified;
+for the gate, so is a changed source file that no command which ran could read (a Python script beside a Rust
+crate, an `api/` package whose pytest is missing while `web/` type-checks).
 
 Not yet: filesystem/network jails. See [ADR 0001](docs/adr/0001-reuse-native-toolchains.md).
 
@@ -227,7 +229,9 @@ job's env (secrets and `${{ }}` expressions skipped; variables that change how p
 `LD_*`, `NODE_OPTIONS` and `PYTHON*`, are never replicated), its Postgres/Redis services from local binaries
 on a free port with URLs rewritten, and its database setup steps. Setup steps are repository data, so only
 package scripts the manifest declares and migration tools (`prisma`, `alembic`, `manage.py migrate`) run,
-never arbitrary shell. The services are torn down afterwards.
+never arbitrary shell. The services are torn down afterwards. A service that can't be started here (no local
+binary, an image other than Postgres/Redis) stops `--ci` with exit 2 before anything runs: the job's URLs would
+still name the CI port on this machine, which may be your own database.
 
 ## Development
 
